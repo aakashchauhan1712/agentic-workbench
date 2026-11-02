@@ -19,6 +19,7 @@ modules_to_test = [
     "core.config",
     "core.conversation_store",
     "core.agent",
+    "tools.file_tools",
     "tools.review_skills",
     "utils.helpers",
 ]

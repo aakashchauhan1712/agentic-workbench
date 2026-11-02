@@ -58,13 +58,19 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
+    st.subheader("🛡️ MCP Tool Allow-list")
+    tool_policy = st.selectbox(
+        "Tool Policy",
+        ["All Tools (*)", "Strict Read-Only Allow-list"],
+        help="Demonstrates Week 2 MCP server tool allow-lists and restrictions.",
+    )
+    if st.session_state.get("_last_tool_policy") != tool_policy:
+        st.session_state["_last_tool_policy"] = tool_policy
+        st.session_state.pop("copilot_session_gh", None)
+
     st.caption(
-        "The assistant uses the **GitHub MCP server** to:\n"
-        "- List files in a repository\n"
-        "- Read file contents\n"
-        "- Inspect commits and branches\n"
-        "- Search code\n\n"
-        "Access is **read-only**."
+        f"Active MCP Policy: **{tool_policy}**.\n"
+        "Restricts tool availability to adhere to the principle of least privilege."
     )
 
     if st.button("🔄 New Conversation", use_container_width=True):
@@ -102,11 +108,19 @@ def _get_gh_session():
             "When reading code, provide clear explanations."
         )
         mcp_token = settings.github_mcp_token or settings.github_token
+        # Week 2 concept: MCP tool allow-lists / restrictions
+        policy = st.session_state.get("_last_tool_policy", "All Tools (*)")
+        if policy == "Strict Read-Only Allow-list":
+            # Explicitly restrict to inspection tools only
+            mcp_tools = ["*get*", "*list*", "*read*", "*search*"]
+        else:
+            mcp_tools = ["*"]
+
         mcp_servers = {
             "github": MCPHTTPServerConfig(
                 url="https://api.githubcopilot.com/mcp/",
                 headers={"Authorization": f"Bearer {mcp_token}"},
-                tools=["*"],
+                tools=mcp_tools,
             )
         }
         session = run_sync(

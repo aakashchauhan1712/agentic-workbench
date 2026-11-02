@@ -20,6 +20,7 @@ import streamlit as st
 from core.agent import create_session, send_message, run_sync
 from core.config import Settings
 from core.conversation_store import ConversationStore
+from tools.file_tools import inspect_workspace_file
 
 # ── Retrieve shared state ──────────────────────────────────────────────
 settings: Settings = st.session_state["settings"]
@@ -82,14 +83,17 @@ messages: list[dict] = st.session_state["chat_messages"]
 def _get_or_create_session():
     if "copilot_session_chat" not in st.session_state:
         system_msg = (
-            "You are a helpful, concise AI assistant. "
-            "Maintain context across the conversation. "
-            "Format responses in Markdown when helpful."
+            "You are a helpful, concise AI assistant for the Agentic Workbench.\n"
+            "You have access to a custom tool: `inspect_workspace_file`.\n"
+            "When the user asks you to inspect, read, summarize, or check files in the repository "
+            "(e.g. app.py, core/config.py), call `inspect_workspace_file` to fetch real content.\n"
+            "Maintain context across the conversation. Format responses in Markdown."
         )
         session = run_sync(
             create_session(
                 client=copilot_client,
                 settings=settings,
+                tools=[inspect_workspace_file],
                 system_message=system_msg,
             )
         )
