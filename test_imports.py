@@ -19,8 +19,6 @@ modules_to_test = [
     "core.config",
     "core.conversation_store",
     "core.agent",
-    "tools.rag_tool",
-    "tools.langchain_rag",
     "tools.review_skills",
     "utils.helpers",
 ]

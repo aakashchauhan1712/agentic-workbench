@@ -24,11 +24,7 @@ env/
 
 # Local application data (keep directory structure, ignore local content)
 data/conversations/*
-data/uploads/*
-data/vector_stores/*
 !data/conversations/.gitkeep
-!data/uploads/.gitkeep
-!data/vector_stores/.gitkeep
 
 # IDE / OS
 .vscode/

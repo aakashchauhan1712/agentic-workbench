@@ -4,10 +4,10 @@ Agentic Workbench – Main entry point.
 Run with:
     python -m streamlit run app.py
 
-Handles:
-- Page routing via native st.navigation
-- Shared state initialisation (settings, client, conversation store)
-- Thread-safe Copilot SDK bridge
+Features:
+- 💬 Chat Assistant: Multi-turn conversational chat powered by GitHub Copilot SDK.
+- 🐙 GitHub Repo Assistant: Read-only repository inspection using GitHub MCP server.
+- 🔍 File Reviewer: Skill-based file & code reviewer with diff display and human approval.
 """
 import sys
 sys.path.insert(0, "C:/Users/Akash/AppData/Roaming/Python/Python312/site-packages")
@@ -36,7 +36,7 @@ conv_store = ConversationStore(settings)
 copilot_client = st.session_state.get("copilot_client")
 client_error = None
 
-if settings.github_token:
+if settings.resolved_github_token:
     force_reconnect = st.session_state.pop("_force_copilot_reconnect", False)
     if copilot_client is None or force_reconnect:
         try:
@@ -54,22 +54,17 @@ st.session_state["client_error"] = client_error
 
 # ── Navigation using native st.navigation ──────────────────────────────
 chat_page = st.Page("pages/chat.py", title="Chat Assistant", icon="💬", default=True)
-pdf_page = st.Page("pages/pdf_chat.py", title="PDF Chat (RAG)", icon="📄")
 gh_page = st.Page("pages/github_assistant.py", title="GitHub Repo Assistant", icon="🐙")
 review_page = st.Page("pages/file_reviewer.py", title="File Reviewer", icon="🔍")
 
 with st.sidebar:
     st.markdown("### 🤖 Agentic Workbench")
-    st.caption("AI-Powered Agentic Assistant")
+    st.caption("GitHub Copilot SDK Assistant")
 
-    # Connection Status Badges (Never expose raw credentials)
-    if settings.github_token:
+    if settings.resolved_github_token:
         st.success("GitHub Copilot Connected", icon="🔑")
     else:
         st.warning("No GITHUB_TOKEN in .env", icon="⚠️")
-
-    if settings.resolved_google_api_key:
-        st.success("Google Gemini Connected", icon="✨")
 
     if client_error:
         st.error(f"Client warning:\n{client_error}")
@@ -79,5 +74,5 @@ with st.sidebar:
 
     st.divider()
 
-pg = st.navigation([chat_page, pdf_page, gh_page, review_page])
+pg = st.navigation([chat_page, gh_page, review_page])
 pg.run()
