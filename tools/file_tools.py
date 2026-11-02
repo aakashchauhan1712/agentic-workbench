@@ -100,3 +100,4 @@ async def inspect_workspace_file(
         "metrics": metrics,
         "content": snippet,
     }, ensure_ascii=False, indent=2)
+
