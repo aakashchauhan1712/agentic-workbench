@@ -94,6 +94,13 @@ async def _start_client(settings: Settings, force_restart: bool = False) -> Copi
             pass
         _client = None
 
+    # Ensure runtime binary exists (critical for Linux / Streamlit Cloud)
+    try:
+        from copilot._cli_download import get_or_download_cli
+        get_or_download_cli()
+    except Exception:
+        pass
+
     _client = CopilotClient(github_token=token)
     _client_token = token
     await _client.start()
