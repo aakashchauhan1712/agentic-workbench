@@ -20,15 +20,20 @@ sys.path.insert(0, "C:/Users/Akash/AppData/Roaming/Python/Python312/site-package
 import streamlit as st
 from copilot import MCPHTTPServerConfig
 
-from core.agent import create_session_and_client, chat_with_session
+from core.agent import create_session, send_message, run_sync
 from core.config import Settings
 
 # ── Shared state ───────────────────────────────────────────────────────
 settings: Settings = st.session_state["settings"]
+copilot_client = st.session_state.get("copilot_client")
 
 # ── Page header ────────────────────────────────────────────────────────
 st.title("🐙 GitHub Repository Assistant")
 st.caption("Ask questions about GitHub repositories. Powered by the GitHub MCP server.")
+
+if copilot_client is None:
+    st.error("Copilot client is not available. Check your GITHUB_TOKEN in `.env`.")
+    st.stop()
 
 if not settings.resolved_github_token:
     st.error("No GITHUB_TOKEN found. Add it to your `.env` file and restart.")
@@ -42,7 +47,7 @@ if "gh_repo" not in st.session_state:
 
 messages: list[dict] = st.session_state["gh_messages"]
 
-# ── Sidebar: configuration ────────────────────────────────────────────
+# ── Sidebar: configuration ────────────────────────────────────
 with st.sidebar:
     st.subheader("🔧 Configuration")
     repo_input = st.text_input(
@@ -52,9 +57,7 @@ with st.sidebar:
     )
     if repo_input != st.session_state["gh_repo"]:
         st.session_state["gh_repo"] = repo_input
-        # Reset session when repo changes
-        st.session_state.pop("gh_client", None)
-        st.session_state.pop("gh_session", None)
+        st.session_state.pop("copilot_session_gh", None)
         st.session_state["gh_messages"] = []
         st.rerun()
 
@@ -65,11 +68,9 @@ with st.sidebar:
         ["All Tools (*)", "Strict Read-Only Allow-list"],
         help="Demonstrates Week 2 MCP server tool allow-lists and restrictions.",
     )
-    # Reset session when policy changes
     if st.session_state.get("_last_tool_policy") != tool_policy:
         st.session_state["_last_tool_policy"] = tool_policy
-        st.session_state.pop("gh_client", None)
-        st.session_state.pop("gh_session", None)
+        st.session_state.pop("copilot_session_gh", None)
 
     st.caption(
         f"Active MCP Policy: **{tool_policy}**.\n"
@@ -78,8 +79,7 @@ with st.sidebar:
 
     if st.button("🔄 New Conversation", use_container_width=True):
         st.session_state["gh_messages"] = []
-        st.session_state.pop("gh_client", None)
-        st.session_state.pop("gh_session", None)
+        st.session_state.pop("copilot_session_gh", None)
         st.rerun()
 
     # Quick-start prompts
@@ -100,8 +100,7 @@ with st.sidebar:
 
 # ── Build MCP-enabled Copilot session ─────────────────────────────────
 def _get_gh_session():
-    """Return the existing GitHub session or create a new one with MCP configured."""
-    if "gh_session" not in st.session_state:
+    if "copilot_session_gh" not in st.session_state:
         repo = st.session_state.get("gh_repo", "")
         repo_context = f"The user wants to explore the repository: {repo}. " if repo else ""
         system_msg = (
@@ -118,10 +117,9 @@ def _get_gh_session():
         # Week 2 concept: MCP tool allow-lists
         policy = st.session_state.get("_last_tool_policy", "All Tools (*)")
         if policy == "Strict Read-Only Allow-list":
-            # Only allow read-style tools — no write, delete, or push operations
             mcp_tools = ["*get*", "*list*", "*read*", "*search*"]
         else:
-            mcp_tools = ["*"]  # All tools
+            mcp_tools = ["*"]
 
         mcp_servers = {
             "github": MCPHTTPServerConfig(
@@ -131,16 +129,17 @@ def _get_gh_session():
             )
         }
 
-        # Create client + session together — simple, no threading required
-        client, session = create_session_and_client(
-            settings=settings,
-            system_message=system_msg,
-            mcp_servers=mcp_servers,
+        session = run_sync(
+            create_session(
+                client=copilot_client,
+                settings=settings,
+                system_message=system_msg,
+                mcp_servers=mcp_servers,
+            )
         )
-        st.session_state["gh_client"] = client
-        st.session_state["gh_session"] = session
+        st.session_state["copilot_session_gh"] = session
 
-    return st.session_state["gh_session"]
+    return st.session_state["copilot_session_gh"]
 
 
 # ── Render messages ────────────────────────────────────────────────────
@@ -168,10 +167,9 @@ def _handle_prompt(prompt: str):
         with st.spinner("Querying GitHub via MCP…"):
             try:
                 session = _get_gh_session()
-                reply = chat_with_session(settings, session, prompt, timeout=180.0)
+                reply = run_sync(send_message(session, prompt, timeout=180.0))
             except Exception as e:
-                st.session_state.pop("gh_client", None)
-                st.session_state.pop("gh_session", None)
+                st.session_state.pop("copilot_session_gh", None)
                 reply = f"⚠️ Error: {e}"
         st.markdown(reply)
 

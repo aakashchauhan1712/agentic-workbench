@@ -1,23 +1,22 @@
 """
 Copilot agent helper.
 
-Wraps the GitHub Copilot SDK so Streamlit pages can call async SDK
-functions without needing to understand async / event loops.
+Wraps the GitHub Copilot SDK so Streamlit pages can interact with it
+synchronously without needing complex threading.
 
-How it works (beginner-friendly explanation)
+How it works (Beginner-Friendly Explanation)
 --------------------------------------------
-The GitHub Copilot SDK uses Python's `async/await` system internally.
-Streamlit's UI runs in normal (synchronous) code.
-
-`asyncio.run()` is Python's built-in bridge: it takes one async function,
-runs it to completion, and hands back the result — just like a regular
-function call. It creates a fresh event loop for that one task, then
-cleans it up automatically.
-
-That's all `run_sync()` does: it calls `asyncio.run()` for you.
+1. Python's GitHub Copilot SDK is asynchronous (`async/await`) because it
+   communicates with an external Copilot process in real time.
+2. Streamlit apps run in regular synchronous Python code.
+3. To bridge them, we keep one persistent event loop (`get_event_loop()`)
+   and execute async calls with `loop.run_until_complete(coro)`.
+4. This avoids `RuntimeError: Event loop is closed` because the loop stays
+   alive across multiple requests (just like Week 1's architecture).
 """
 import asyncio
 import sys
+from typing import Optional
 
 sys.path.insert(0, "C:/Users/Akash/AppData/Roaming/Python/Python312/site-packages")
 
@@ -34,169 +33,130 @@ from core.config import Settings
 
 
 # ---------------------------------------------------------------------------
-# run_sync — the only "bridge" we need
+# Persistent Event Loop & run_sync Bridge
 # ---------------------------------------------------------------------------
+
+_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def get_event_loop() -> asyncio.AbstractEventLoop:
+    """Get or create the shared persistent event loop."""
+    global _loop
+    if _loop is None or _loop.is_closed():
+        _loop = asyncio.new_event_loop()
+    return _loop
+
 
 def run_sync(coro):
     """
-    Run an async coroutine from regular (synchronous) Streamlit code.
+    Run an async coroutine from synchronous Streamlit code.
 
-    Usage:
-        result = run_sync(some_async_function(arg1, arg2))
-
-    asyncio.run() works from any thread — including Streamlit's worker
-    threads — so no extra threading setup is needed.
+    Keeps the loop open so background JSON-RPC listeners in the Copilot SDK
+    continue running smoothly without 'Event loop is closed' errors.
     """
-    return asyncio.run(coro)
+    loop = get_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
 
 
 # ---------------------------------------------------------------------------
-# Client helpers
+# Client Lifecycle
 # ---------------------------------------------------------------------------
 
-async def _start_client(settings: Settings) -> CopilotClient:
-    """Create and start a CopilotClient (runs inside asyncio.run)."""
+_client: Optional[CopilotClient] = None
+_client_token: Optional[str] = None
+
+
+async def _start_client(settings: Settings, force_restart: bool = False) -> CopilotClient:
+    global _client, _client_token
     token = (settings.github_token or "").strip() or None
 
-    # Download the Copilot CLI binary if it's missing (needed on cloud)
-    try:
-        from copilot._cli_download import get_or_download_cli
-        get_or_download_cli()
-    except Exception:
-        pass  # Not fatal — skip silently
+    # Reuse running client if token hasn't changed
+    if _client is not None and not force_restart and _client_token == token:
+        return _client
 
-    client = CopilotClient(github_token=token)
-    await client.start()
-    return client
+    # Stop previous client if needed
+    if _client is not None:
+        try:
+            await _client.stop()
+        except Exception:
+            pass
+        _client = None
 
-
-def get_client(settings: Settings) -> CopilotClient:
-    """
-    Create and start a CopilotClient synchronously.
-    Called once from app.py and stored in st.session_state.
-    """
-    return run_sync(_start_client(settings))
-
-
-async def _stop_client(client: CopilotClient) -> None:
-    """Stop a running CopilotClient (runs inside asyncio.run)."""
-    try:
-        await client.stop()
-    except Exception:
-        pass  # Ignore errors on shutdown
-
-
-def stop_client(client: CopilotClient) -> None:
-    """Stop a CopilotClient synchronously."""
-    run_sync(_stop_client(client))
-
-
-# ---------------------------------------------------------------------------
-# Session helpers
-# ---------------------------------------------------------------------------
-
-async def _create_session(
-    settings: Settings,
-    tools: list | None = None,
-    system_message: str | None = None,
-    mcp_servers: dict | None = None,
-):
-    """
-    Create a brand-new CopilotClient + session in one async block.
-
-    Why create the client here too?
-    Each asyncio.run() call gets its own event loop. The CopilotClient
-    binds to the loop it was started in, so we must create it in the
-    same loop as the session. This keeps the code simple and correct.
-    """
-    token = (settings.github_token or "").strip() or None
-
-    # Download CLI binary if missing
+    # Download Copilot CLI binary if missing (needed for cloud platforms)
     try:
         from copilot._cli_download import get_or_download_cli
         get_or_download_cli()
     except Exception:
         pass
 
-    client = CopilotClient(github_token=token)
-    await client.start()
+    _client = CopilotClient(github_token=token)
+    _client_token = token
+    await _client.start()
+    return _client
 
+
+def get_client(settings: Settings, force_restart: bool = False) -> CopilotClient:
+    """Create and start the CopilotClient synchronously."""
+    return run_sync(_start_client(settings, force_restart=force_restart))
+
+
+# ---------------------------------------------------------------------------
+# Session Management
+# ---------------------------------------------------------------------------
+
+async def create_session(
+    client: CopilotClient,
+    settings: Settings,
+    tools: Optional[list[Tool]] = None,
+    system_message: Optional[str] = None,
+    mcp_servers: Optional[dict] = None,
+):
+    """Create a new Copilot conversation session."""
+    token = (settings.github_token or "").strip() or None
     sm = {"mode": "replace", "content": system_message} if system_message else None
 
-    session = await client.create_session(
-        on_permission_request=PermissionHandler.approve_all,
-        model=settings.copilot_model or None,
-        tools=tools or [],
-        system_message=sm,
-        mcp_servers=mcp_servers,
-        github_token=token,
-    )
+    try:
+        session = await client.create_session(
+            on_permission_request=PermissionHandler.approve_all,
+            model=settings.copilot_model or None,
+            tools=tools or [],
+            system_message=sm,
+            mcp_servers=mcp_servers,
+            github_token=token,
+        )
+        return session
+    except Exception as err:
+        err_msg = str(err)
+        if "Bad credentials" in err_msg or "401" in err_msg:
+            # Token issue or stale connection — restart client once
+            fresh_client = await _start_client(settings, force_restart=True)
+            return await fresh_client.create_session(
+                on_permission_request=PermissionHandler.approve_all,
+                model=settings.copilot_model or None,
+                tools=tools or [],
+                system_message=sm,
+                mcp_servers=mcp_servers,
+                github_token=token,
+            )
+        raise
 
-    # Return both so the caller can reuse the client for send_message
-    return client, session
 
-
-async def _send_message(session, message: str, timeout: float = 120.0) -> str:
-    """Send one message and wait for the assistant reply (runs inside asyncio.run)."""
+async def send_message(session, message: str, timeout: float = 120.0) -> str:
+    """Send a message to an active Copilot session and return assistant text."""
     event = await session.send_and_wait(message, timeout=timeout)
     return _extract_text(event)
 
 
 # ---------------------------------------------------------------------------
-# Public helpers used by Streamlit pages
-# ---------------------------------------------------------------------------
-
-def create_session_and_client(
-    settings: Settings,
-    tools: list | None = None,
-    system_message: str | None = None,
-    mcp_servers: dict | None = None,
-):
-    """
-    Create a CopilotClient and session together.
-
-    Returns: (client, session) — store both in st.session_state.
-    On the next user message, pass them to chat_with_session().
-    """
-    return run_sync(
-        _create_session(
-            settings=settings,
-            tools=tools,
-            system_message=system_message,
-            mcp_servers=mcp_servers,
-        )
-    )
-
-
-def chat_with_session(
-    settings: Settings,
-    session,
-    message: str,
-    timeout: float = 120.0,
-) -> str:
-    """
-    Send a message to an existing session and return the reply text.
-
-    Because asyncio.run() creates a fresh loop each time, we must also
-    re-attach the session's client to that loop.  The simplest way is to
-    run both operations inside one async function.
-    """
-    async def _run():
-        return await _send_message(session, message, timeout=timeout)
-
-    return run_sync(_run())
-
-
-# ---------------------------------------------------------------------------
-# Text extraction helpers
+# Text Extraction
 # ---------------------------------------------------------------------------
 
 def _extract_text(event) -> str:
-    """Pull plain text out of a Copilot SessionEvent (ASSISTANT_MESSAGE)."""
+    """Extract readable text from a Copilot SessionEvent."""
     if event is None:
         return ""
 
-    # Check event.data (AssistantMessageData)
     data = getattr(event, "data", None)
     if data is not None:
         if isinstance(data, AssistantMessageData) and getattr(data, "content", None):
@@ -206,7 +166,6 @@ def _extract_text(event) -> str:
         if isinstance(data, dict) and data.get("content"):
             return data["content"]
 
-    # Check metadata list
     metadata = getattr(event, "metadata", None)
     if isinstance(metadata, list):
         for item in reversed(metadata):
@@ -214,7 +173,6 @@ def _extract_text(event) -> str:
             if text:
                 return text
 
-    # Fallback: walk the raw dict representation
     try:
         d = event.to_dict() if hasattr(event, "to_dict") else {}
         return _extract_text_from_dict(d)
@@ -238,7 +196,6 @@ def _try_extract_assistant_text(item) -> str:
 
 
 def _extract_text_from_dict(d: dict) -> str:
-    """Recursively search a dict for an assistant text content field."""
     if not isinstance(d, dict):
         return ""
 
@@ -253,13 +210,13 @@ def _extract_text_from_dict(d: dict) -> str:
 
     for v in d.values():
         if isinstance(v, dict):
-            result = _extract_text_from_dict(v)
-            if result:
-                return result
+            res = _extract_text_from_dict(v)
+            if res:
+                return res
         elif isinstance(v, list):
             for item in v:
                 if isinstance(item, dict):
-                    result = _extract_text_from_dict(item)
-                    if result:
-                        return result
+                    res = _extract_text_from_dict(item)
+                    if res:
+                        return res
     return ""

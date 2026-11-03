@@ -16,17 +16,22 @@ from pathlib import Path
 
 import streamlit as st
 
-from core.agent import create_session_and_client, chat_with_session
+from core.agent import create_session, send_message, run_sync
 from core.config import Settings
 from tools.review_skills import SKILL_NAMES, get_skill_system_prompt, extract_improved_content
 from utils.helpers import compute_diff, read_file_safe, workspace_files
 
 # ── Shared state ───────────────────────────────────────────────────────
 settings: Settings = st.session_state["settings"]
+copilot_client = st.session_state.get("copilot_client")
 
 # ── Page header ────────────────────────────────────────────────────────
 st.title("🔍 Skill-Based File Reviewer")
 st.caption("Select a review skill, pick a file, and let the AI suggest improvements.")
+
+if copilot_client is None:
+    st.error("Copilot client is not available. Check your GITHUB_TOKEN in `.env`.")
+    st.stop()
 
 if not settings.resolved_github_token:
     st.error("No GITHUB_TOKEN found. Add it to your `.env` file and restart.")
@@ -104,20 +109,21 @@ run_review = st.button(
 if run_review and original_content:
     system_prompt = get_skill_system_prompt(selected_skill)
 
-    # For file review, we create a fresh session each time (no ongoing conversation needed)
     with st.spinner(f"Running {selected_skill}…"):
         try:
-            # Create a brand-new session with the skill's system prompt
-            client, session = create_session_and_client(
-                settings=settings,
-                system_message=system_prompt,
+            session = run_sync(
+                create_session(
+                    client=copilot_client,
+                    settings=settings,
+                    system_message=system_prompt,
+                )
             )
             user_prompt = (
                 f"Please review the following file named `{file_name}`:\n\n"
                 f"```\n{original_content[:12000]}\n```\n\n"
                 f"Provide your review and the improved version."
             )
-            reply = chat_with_session(settings, session, user_prompt, timeout=300.0)
+            reply = run_sync(send_message(session, user_prompt, timeout=300.0))
         except Exception as e:
             reply = f"⚠️ Error during review: {e}"
 
@@ -189,7 +195,7 @@ if result:
                     st.session_state["review_result"] = None
                     st.rerun()
         else:
-            # File was uploaded (not from workspace) — offer download instead
+            # File was uploaded, not from workspace – offer download
             st.download_button(
                 label="⬇️ Download Improved Version",
                 data=improved.encode("utf-8"),
