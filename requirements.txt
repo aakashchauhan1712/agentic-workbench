@@ -1,0 +1,5 @@
+github-copilot-sdk>=1.0.28
+streamlit>=1.46.0
+pydantic>=2.11
+pydantic-settings>=2.0
+python-dotenv>=1.0
