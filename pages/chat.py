@@ -27,9 +27,6 @@ st.caption("Continuous conversational AI powered by GitHub Copilot SDK")
 if copilot_client is None:
     st.error("Copilot client is not available. Check your GITHUB_TOKEN in `.env`.")
     st.stop()
-    
-available_models = run_sync(copilot_client.list_models())
-st.write("Available model IDs:", [model.id for model in available_models])
 
 # ── Sidebar: conversation list ─────────────────────────────────────────
 with st.sidebar:

@@ -45,7 +45,8 @@ Open your browser at `http://localhost:8501`.
 4. Under **Advanced settings -> Secrets**, add:
    ```toml
    GITHUB_TOKEN = "your_github_pat_token"
-   COPILOT_MODEL = "gpt-4o"
+   # Optional: omit to let Copilot select an available model.
+   # COPILOT_MODEL = "model-id"
    ```
 5. Click **Deploy!**
 
@@ -92,7 +93,7 @@ agentic_workbench/
 |---|---|---|
 | `GITHUB_TOKEN` | GitHub Personal Access Token with Copilot access | *(required)* |
 | `GITHUB_MCP_TOKEN` | GitHub token for MCP server (defaults to GITHUB_TOKEN) | *(optional)* |
-| `COPILOT_MODEL` | Copilot model name | `gpt-4o` |
+| `COPILOT_MODEL` | Optional Copilot model ID; blank uses runtime selection | *(automatic)* |
 | `DATA_DIR` | Local storage directory path | `data` |
 
 ## Technical Implementation Details
@@ -102,3 +103,4 @@ agentic_workbench/
 - **MCP Integration**: `MCPHTTPServerConfig` pointing to `https://api.githubcopilot.com/mcp/` for read-only repository inspection.
 - **Human-in-the-Loop Safety**: The File Reviewer computes unified diffs with Python's `difflib` and strictly gates disk writes behind an explicit user approval button.
 - **Review Skills**: The File Reviewer discovers `.github/skills/<skill-name>/SKILL.md` files at startup. Add a skill by creating a folder with a `SKILL.md` containing `name` and `description` frontmatter, a level-one title, and the system instructions.
+- **Model compatibility**: The Copilot SDK version is pinned to the locally verified release. If a configured model is unavailable, the app logs the issue and retries using the Copilot runtime's automatic model selection.

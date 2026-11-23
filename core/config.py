@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     github_token: str = Field(default="", alias="GITHUB_TOKEN")
     github_mcp_token: str = Field(default="", alias="GITHUB_MCP_TOKEN")
 
-    # Copilot model
-    copilot_model: str = Field(default="gpt-4o", alias="COPILOT_MODEL")
+    # Leave blank to use the model selected by the Copilot runtime.
+    copilot_model: str = Field(default="", alias="COPILOT_MODEL")
 
     # Data directory (relative to project root)
     data_dir: str = Field(default="data", alias="DATA_DIR")

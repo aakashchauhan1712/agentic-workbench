@@ -15,6 +15,7 @@ How it works (Beginner-Friendly Explanation)
    alive across multiple requests (just like Week 1's architecture).
 """
 import asyncio
+import logging
 import sys
 from typing import Optional
 
@@ -115,30 +116,54 @@ async def create_session(
     """Create a new Copilot conversation session."""
     token = (settings.github_token or "").strip() or None
     sm = {"mode": "replace", "content": system_message} if system_message else None
+    configured_model = settings.copilot_model or None
 
-    try:
-        session = await client.create_session(
+    async def create_with_model(target_client: CopilotClient, model: str | None):
+        return await target_client.create_session(
             on_permission_request=PermissionHandler.approve_all,
-            model=settings.copilot_model or None,
+            model=model,
             tools=tools or [],
             system_message=sm,
             mcp_servers=mcp_servers,
             github_token=token,
         )
-        return session
+
+    async def create_with_fallback(target_client: CopilotClient):
+        try:
+            return await create_with_model(target_client, configured_model)
+        except Exception as err:
+            error_text = str(err).lower()
+            if (
+                not configured_model
+                or "model" not in error_text
+                or "not available" not in error_text
+            ):
+                raise
+
+            logging.warning(
+                "Configured Copilot model %r is unavailable; retrying with automatic model selection.",
+                configured_model,
+            )
+            try:
+                return await create_with_model(target_client, None)
+            except Exception as fallback_error:
+                fallback_error_text = str(fallback_error).lower()
+                if "bad credentials" in fallback_error_text or "401" in fallback_error_text:
+                    raise
+                raise RuntimeError(
+                    f"Configured Copilot model {configured_model!r} is unavailable, "
+                    "and automatic model selection failed: "
+                    f"{fallback_error}"
+                ) from fallback_error
+
+    try:
+        return await create_with_fallback(client)
     except Exception as err:
         err_msg = str(err)
         if "Bad credentials" in err_msg or "401" in err_msg:
             # Token issue or stale connection — restart client once
             fresh_client = await _start_client(settings, force_restart=True)
-            return await fresh_client.create_session(
-                on_permission_request=PermissionHandler.approve_all,
-                model=settings.copilot_model or None,
-                tools=tools or [],
-                system_message=sm,
-                mcp_servers=mcp_servers,
-                github_token=token,
-            )
+            return await create_with_fallback(fresh_client)
         raise
 
 
